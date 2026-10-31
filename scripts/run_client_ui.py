@@ -532,7 +532,7 @@ HTML_UI = """
             <span class="brand-title">FALL</span>
         </a>
         <div class="nav-pills">
-            <span class="pill-badge"><span class="pulse-dot"></span> <span id="sync-text">Synchronized</span></span>
+            <span class="pill-badge"><span class="pulse-dot" id="pulse-dot"></span> <span id="sync-text">Connecting...</span></span>
             <span class="fuel-pill">⛽ <span id="top-fuel-bal">50.0000</span> FUEL</span>
         </div>
     </header>
@@ -827,13 +827,21 @@ Multi-Device WebSocket link connected. Real-time token streaming active.
             ws = new WebSocket(`${proto}//${window.location.host}/ws`);
 
             ws.onopen = () => {
-                document.getElementById('sync-text').innerText = 'Synchronized';
+                document.getElementById('sync-text').innerText = 'Connected';
+            };
+
+            ws.onclose = () => {
+                document.getElementById('sync-text').innerText = 'Disconnected';
+                setTimeout(connectWS, 2000);
             };
 
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
 
-                if (data.type === 'token') {
+                if (data.type === 'client_count') {
+                    const count = data.count || 1;
+                    document.getElementById('sync-text').innerText = count > 1 ? `Connected (${count} devices)` : 'Connected (1 device)';
+                } else if (data.type === 'token') {
                     if (currentAiBubbleContent) {
                         currentAiBubbleContent.textContent += data.token;
                         chatBox.scrollTop = chatBox.scrollHeight;
@@ -935,12 +943,14 @@ async def get_index():
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     connected_clients.append(websocket)
+    await broadcast_event({"type": "client_count", "count": len(connected_clients)})
     try:
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
         if websocket in connected_clients:
             connected_clients.remove(websocket)
+        await broadcast_event({"type": "client_count", "count": len(connected_clients)})
 
 @app.post("/api/trigger")
 async def trigger_swarm_inference(req: Request):
