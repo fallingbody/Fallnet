@@ -1,0 +1,36 @@
+name: Sync to Hugging Face Hub
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  sync-to-hub:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_REPO: ${{ secrets.HF_SPACE_REPO }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::error::HF_TOKEN secret is not set. Add it under Repository Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          
+          # Default fallback or user defined repo name (e.g., username/fall)
+          SPACE_NAME="${HF_SPACE_REPO:-${{ github.repository_owner }}/fall}"
+          
+          echo "Pushing to Hugging Face Space: https://huggingface.co/spaces/$SPACE_NAME"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git remote add space "https://USER:$HF_TOKEN@huggingface.co/spaces/$SPACE_NAME"
+          git push space HEAD:main --force
