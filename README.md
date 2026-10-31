@@ -1,7 +1,7 @@
 ---
 title: FALL • Decentralized P2P AI Mesh
 emoji: 🍂
-colorFrom: amber
+colorFrom: yellow
 colorTo: red
 sdk: gradio
 app_file: app.py
