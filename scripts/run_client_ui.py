@@ -528,8 +528,8 @@ HTML_UI = """
     <!-- TOP NAVBAR -->
     <header class="top-navbar">
         <a href="#" class="brand-logo">
-            <div class="logo-icon">⚡</div>
-            <span class="brand-title">AirCompute</span>
+            <div class="logo-icon">🍂</div>
+            <span class="brand-title">FALL</span>
         </a>
         <div class="nav-pills">
             <span class="pill-badge"><span class="pulse-dot"></span> <span id="sync-text">Synchronized</span></span>
@@ -559,11 +559,11 @@ HTML_UI = """
             <div class="chat-container">
                 <div class="chat-stream" id="chat-stream-box">
                     <div class="msg-bubble assistant">
-                        <div class="avatar ai-avatar">⚡</div>
+                        <div class="avatar ai-avatar">🍂</div>
                         <div class="bubble-content">
-                            <p>Hello! I am <strong>AirCompute</strong>, running on a decentralized 28-layer neural network sharded across your connected devices.</p>
+                            <p>Hello! I am <strong>FALL</strong>, running on a decentralized 30-layer neural network sharded across your connected swarm nodes.</p>
                             <div class="telemetry-meta">
-                                <span>🌐 Sharded Qwen2.5-1.5B-Instruct</span>
+                                <span>🌐 Sharded SmolLM-135M-Instruct (30 Layers)</span>
                                 <span>⚡ Latency: 1.2ms (P2P QUIC)</span>
                                 <span>🔒 Split-Learning Encrypted</span>
                             </div>
