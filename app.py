@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 FALL (SwarmNet) - Hugging Face Space Production Entrypoint
-Compatible with ZeroGPU and CPU runtimes.
+Runs via Uvicorn server on port 7860.
 """
 import sys
 import os
@@ -10,20 +10,6 @@ import time
 
 ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
 sys.path.insert(0, ROOT_DIR)
-
-# Handle ZeroGPU @spaces.GPU decorator if running under spaces runtime
-try:
-    import spaces
-    @spaces.GPU
-    def zerogpu_warmup():
-        """Satisfies ZeroGPU startup check"""
-        import torch
-        return torch.cuda.is_available()
-    zerogpu_warmup()
-except Exception:
-    pass
-
-import gradio as gr
 
 # 1. Start Miner 1 (Layers 0 to 14) in background
 print("⚡ Starting Swarm Miner 01 (Layers 0-14)...")
@@ -61,11 +47,11 @@ m2_proc = subprocess.Popen(
 
 time.sleep(2)
 
-# 3. Mount our custom FastAPI app inside Gradio
-from scripts.run_client_ui import app as fastapi_app
+# 3. Import and launch the FastAPI app directly with Uvicorn
+from scripts.run_client_ui import app
 
-# gr.mount_gradio_app modifies and returns the FastAPI app
-app = gr.mount_gradio_app(fastapi_app, gr.Blocks(), path="/gradio")
-
-# Export for Hugging Face Spaces Gradio runner
-demo = app
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 7860))
+    print(f"\n🌐 FALL UI & Swarm Genesis listening on 0.0.0.0:{port}\n")
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
