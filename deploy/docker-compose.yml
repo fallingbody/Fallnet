@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  miner:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: swarmnet-miner:latest
+    container_name: swarmnet_miner
+    network_mode: "host" # Crucial for P2P UDP NAT traversal to work optimally
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: >
+      python scripts/run_miner.py 
+      --miner-id "cloud_miner_aws_01" 
+      --port 8000 
+      --layers 15-29 
+      --dht-port 8468
+    restart: unless-stopped

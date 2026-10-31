@@ -1,0 +1,29 @@
+#cloud-config
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - git
+
+runcmd:
+  # Install Docker
+  - curl -fsSL https://get.docker.com -o get-docker.sh
+  - sh get-docker.sh
+  
+  # Install Docker Compose
+  - curl -L "https://github.com/docker/compose/releases/download/v2.24.5/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+  - chmod +x /usr/local/bin/docker-compose
+  
+  # Setup Swarmnet Directory
+  - mkdir -p /opt/swarmnet
+  - cd /opt/swarmnet
+  
+  # Note: In a real deployment, we would git clone the repository here. 
+  # Since this is local dev without a remote repo yet, we'll write a simple dummy or assume code is scp'd.
+  # For demonstration, we just pull a generic python image if not built, but the terraform script can upload the dir.
