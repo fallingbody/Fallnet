@@ -71,3 +71,4 @@ typing_extensions==4.16.0
 u-msgpack-python==2.8.0
 uvicorn==0.52.1
 websockets==17.0.1
+gradio

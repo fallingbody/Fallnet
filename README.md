@@ -3,8 +3,8 @@ title: FALL • Decentralized P2P AI Mesh
 emoji: 🍂
 colorFrom: amber
 colorTo: red
-sdk: docker
-app_port: 7860
+sdk: gradio
+app_file: app.py
 pinned: false
 ---
 
