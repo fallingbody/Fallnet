@@ -59,9 +59,9 @@ shellingham==1.5.4
 starlette==1.5.0
 sympy==1.14.0
 tokenizers==0.22.2
-torch==2.13.0+cpu
-torchaudio==2.11.0+cpu
-torchvision==0.28.0+cpu
+torch==2.13.0
+torchaudio==2.11.0
+torchvision==0.28.0
 tqdm==4.70.0
 transformers==5.14.1
 triton==3.7.1
