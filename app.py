@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-FALL (SwarmNet) - Hugging Face Space Production Entrypoint (Gradio SDK runtime)
-Mounts our custom FastAPI & WebSocket UI directly so no Docker billing is needed!
+FALL (SwarmNet) - Hugging Face Space Production Entrypoint
+Runs on standard CPU basic or ZeroGPU runtime.
 """
 import sys
 import os
@@ -11,8 +11,6 @@ import gradio as gr
 
 ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
 sys.path.insert(0, ROOT_DIR)
-
-from swarmnet.config import CONFIG
 
 # 1. Start Miner 1 (Layers 0 to 14) in background
 print("⚡ Starting Swarm Miner 01 (Layers 0-14)...")
@@ -56,11 +54,8 @@ from scripts.run_client_ui import app as fastapi_app
 # Gradio mounts our full custom FastAPI suite with WebSocket & Chat Studio
 demo = gr.mount_gradio_app(fastapi_app, gr.Blocks(), path="/gradio")
 
-# Export for HF Spaces Gradio runner
+# Export for HF Spaces Gradio runner (HF runs demo.launch() automatically!)
 app = fastapi_app
 
 if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 7860))
-    print(f"\n🌐 FALL UI & Swarm Genesis listening on http://0.0.0.0:{port}\n")
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+    demo.launch(server_name="0.0.0.0", server_port=7860)
