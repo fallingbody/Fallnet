@@ -1,89 +1,118 @@
 """
 Layer Miner Execution Engine
-Executes forward-pass Transformer blocks across assigned model layer slices.
+Runs a contiguous slice of a HuggingFace decoder model's layers.
+
+Correctness contract (enforced by tests/test_pipeline_equivalence.py):
+  client embed -> shard_1 -> ... -> shard_n -> client norm+lm_head
+  must reproduce HF `generate()` greedy output token-for-token (FP16 wire).
+
+Protocol per session:
+  - First call: start_pos=0 with the full prompt's hidden states (prefill).
+  - Next calls: start_pos=<tokens already processed>, hidden states of NEW tokens only.
+  - start_pos=0 always resets the session's KV cache.
+  - Any other start_pos that disagrees with the cached length raises KVDesyncError.
 """
-import logging
 import gc
+from collections import OrderedDict
+from typing import Optional
+
 import torch
 import torch.nn as nn
-from typing import Tuple, List, Optional
+from transformers import AutoConfig, AutoModelForCausalLM, DynamicCache
 
-logger = logging.getLogger(__name__)
-from transformers import AutoModelForCausalLM
-from swarmnet.miner.paged_kv import PagedKVCachePool
-from swarmnet.protocol.tensor_codec import TensorCodec
+from swarmnet.config import CONFIG
+from swarmnet.protocol.tensor_codec import FP16, TensorCodec
 
-class ShardedLayerBlock(nn.Module):
-    def __init__(self, layer_idx: int, d_model: int = 576, num_heads: int = 9):
-        super().__init__()
-        self.layer_idx = layer_idx
-        self.d_model = d_model
-        self.num_heads = num_heads
-        
-        self.attn_norm = nn.LayerNorm(d_model)
-        self.attn = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
-        self.ffn_norm = nn.LayerNorm(d_model)
-        self.ffn = nn.Sequential(
-            nn.Linear(d_model, d_model * 4),
-            nn.GELU(),
-            nn.Linear(d_model * 4, d_model)
-        )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Pre-LN Self-Attention
-        normed = self.attn_norm(x)
-        attn_out, _ = self.attn(normed, normed, normed)
-        x = x + attn_out
-        
-        # Pre-LN Feedforward
-        ffn_out = self.ffn(self.ffn_norm(x))
-        x = x + ffn_out
-        return x
+class KVDesyncError(RuntimeError):
+    """Client and miner disagree on how many tokens this session has processed."""
+
+
+def build_causal_mask(q_len: int, start_pos: int, dtype: torch.dtype, device) -> torch.Tensor:
+    """Additive 4D mask [1, 1, q_len, start_pos + q_len]. Query i may attend keys 0..start_pos+i.
+
+    Passed explicitly so correctness does not depend on SDPA's implicit `is_causal`
+    fallback (without it, eager attention silently produces garbage).
+    """
+    kv_len = start_pos + q_len
+    q_pos = torch.arange(start_pos, kv_len, device=device).unsqueeze(1)
+    k_pos = torch.arange(kv_len, device=device).unsqueeze(0)
+    mask = torch.zeros(q_len, kv_len, dtype=dtype, device=device)
+    mask.masked_fill_(k_pos > q_pos, torch.finfo(dtype).min)
+    return mask[None, None]
+
 
 class LayerMinerRunner:
-    def __init__(self, layer_start: int, layer_end: int, model_name: str = "Qwen/Qwen2.5-1.5B-Instruct", d_model: int = 1536, device: str = "cpu"):
-        self.layer_start = layer_start
-        self.layer_end = layer_end
-        self.d_model = d_model
-        self.device = device
-        self.model_name = model_name
-        
-        print(f"🧠 Loading {model_name} layers {layer_start} to {layer_end}...")
-        try:
-            hf_model = AutoModelForCausalLM.from_pretrained(model_name, local_files_only=True)
-        except Exception:
-            hf_model = AutoModelForCausalLM.from_pretrained(model_name)
-            
-        self.layers = hf_model.model.layers[layer_start : layer_end + 1].to(device)
-        self.rotary_emb = hf_model.model.rotary_emb.to(device)
-        
-        # Free unused layers and LM head from memory
-        del hf_model
-        import gc
-        gc.collect()
-        
-        self.kv_pool = PagedKVCachePool(device=device)
+    def __init__(self, layer_start: int, layer_end: int, model_name: str = CONFIG.MODEL_NAME,
+                 device: str = "cpu", dtype: torch.dtype = torch.float32, max_sessions: int = 32,
+                 attn_implementation: Optional[str] = None):
+        config = AutoConfig.from_pretrained(model_name)
+        n = config.num_hidden_layers
+        if not (0 <= layer_start <= layer_end < n):
+            raise ValueError(f"Layer range {layer_start}-{layer_end} invalid for {model_name} ({n} layers: 0-{n - 1})")
 
-    def execute_forward_slice(self, inbound_packed_bytes: bytes, session_id: str) -> bytes:
-        """
-        1. Dequantize inbound FP8 tensor
-        2. Execute forward pass across assigned layers
-        3. Quantize output back to FP8
-        """
-        # Dequantize
-        h_in = TensorCodec.dequantize_fp8_to_fp16(inbound_packed_bytes, device=self.device)
-        
-        # Forward pass through local layer block
-        h_out = h_in.to(self.layers[0].input_layernorm.weight.dtype)
-        batch_size, seq_len, _ = h_out.shape
-        position_ids = torch.arange(seq_len, dtype=torch.long, device=self.device).unsqueeze(0)
-        position_embeddings = self.rotary_emb(h_out, position_ids=position_ids)
-        
-        with torch.no_grad():
-            for layer in self.layers:
-                layer_out = layer(h_out, position_embeddings=position_embeddings, position_ids=position_ids)
-                h_out = layer_out[0] if isinstance(layer_out, tuple) else layer_out
-                
-        # Re-quantize to FP8 for network transmission
-        outbound_bytes, _, _ = TensorCodec.quantize_fp16_to_fp8(h_out)
-        return outbound_bytes
+        self.layer_start, self.layer_end = layer_start, layer_end
+        self.model_name, self.device, self.dtype = model_name, device, dtype
+        self.max_sessions = max_sessions
+
+        # TODO(roadmap P1): load only this shard's tensors from safetensors.
+        # Today the FULL model is loaded then trimmed -> peak RAM = whole model.
+        kwargs = {"dtype": dtype}
+        if attn_implementation:
+            kwargs["attn_implementation"] = attn_implementation
+        hf_model = AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
+        self.config = hf_model.config
+        self.layers = nn.ModuleList(hf_model.model.layers[layer_start:layer_end + 1]).to(device).eval()
+        self.rotary_emb = hf_model.model.rotary_emb.to(device)
+        del hf_model
+        gc.collect()
+
+        self._sessions: "OrderedDict[str, tuple[DynamicCache, int]]" = OrderedDict()
+
+    # ------------------------------------------------------------------ sessions
+    def session_length(self, session_id: str) -> int:
+        return self._sessions[session_id][1] if session_id in self._sessions else 0
+
+    def release_session(self, session_id: str) -> None:
+        self._sessions.pop(session_id, None)
+
+    def _get_cache(self, session_id: str, start_pos: int) -> DynamicCache:
+        if start_pos == 0:
+            self._sessions.pop(session_id, None)
+            cache = DynamicCache(config=self.config)
+        else:
+            if session_id not in self._sessions:
+                raise KVDesyncError(f"Unknown session '{session_id}' at start_pos={start_pos} (evicted or never prefilled)")
+            cache, length = self._sessions[session_id]
+            if length != start_pos:
+                raise KVDesyncError(f"Session '{session_id}': miner has {length} tokens, client sent start_pos={start_pos}")
+            self._sessions.move_to_end(session_id)
+        return cache
+
+    # ------------------------------------------------------------------ compute
+    @torch.no_grad()
+    def forward(self, hidden: torch.Tensor, session_id: str, start_pos: int = 0) -> torch.Tensor:
+        hidden = hidden.to(self.device, self.dtype)
+        _, q_len, _ = hidden.shape
+        cache = self._get_cache(session_id, start_pos)
+
+        position_ids = torch.arange(start_pos, start_pos + q_len, device=self.device).unsqueeze(0)
+        position_embeddings = self.rotary_emb(hidden, position_ids=position_ids)
+        mask = build_causal_mask(q_len, start_pos, self.dtype, self.device)
+
+        for layer in self.layers:
+            out = layer(hidden, attention_mask=mask, position_ids=position_ids,
+                        past_key_values=cache, use_cache=True, position_embeddings=position_embeddings)
+            hidden = out[0] if isinstance(out, tuple) else out
+
+        self._sessions[session_id] = (cache, start_pos + q_len)
+        self._sessions.move_to_end(session_id)
+        while len(self._sessions) > self.max_sessions:
+            self._sessions.popitem(last=False)
+        return hidden
+
+    def execute_forward_slice(self, inbound: bytes, session_id: str, start_pos: int = 0,
+                              out_mode: int = FP16) -> bytes:
+        h_in = TensorCodec.decode_payload(inbound, device=self.device)
+        h_out = self.forward(h_in, session_id=session_id, start_pos=start_pos)
+        return TensorCodec.encode_payload(h_out, out_mode)

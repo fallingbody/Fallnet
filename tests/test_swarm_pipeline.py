@@ -1,44 +1,36 @@
 """
-End-to-End Test for Split-Learning Pipeline & MoE Routing
+End-to-End Test for Real Split-Learning Pipeline with Real Weights
 """
 import pytest
 import torch
 from swarmnet.client.embedder import LocalSplitClient
 from swarmnet.miner.layer_runner import LayerMinerRunner
-from swarmnet.moe.moe_router import SparseMoERouter
-from swarmnet.protocol.tensor_codec import TensorCodec
+from swarmnet.protocol.tensor_codec import TensorCodec, FP16
 
 def test_full_pipeline_forward_pass():
-    d_model = 576  # SmolLM-135M test dimension (divisible by 9 heads)
-    vocab_size = 1000
+    # 1. Client loads real embedding & LM head
+    client = LocalSplitClient()
+    prompt = "Hello"
+    input_ids = client.tokenizer(prompt, return_tensors="pt").input_ids
     
-    # 1. Client creates local hidden state (Embedding + Layer 1)
-    client = LocalSplitClient(vocab_size=vocab_size, d_model=d_model)
-    input_ids = torch.tensor([[12, 45, 99, 230]])
-    h_1 = client.encode_and_scramble(input_ids)
+    # 2. Client embeds
+    h_0 = client.embed(input_ids)
+    assert h_0.shape[-1] == client.config.hidden_size
+    packed_h0 = TensorCodec.encode_payload(h_0, mode=FP16)
     
-    # 2. Pack to FP8
-    packed_h1, _, _ = TensorCodec.quantize_fp16_to_fp8(h_1)
+    # 3. Miner 1 (e.g., layers 0 to 14)
+    miner_1 = LayerMinerRunner(layer_start=0, layer_end=14)
+    packed_h1 = miner_1.execute_forward_slice(packed_h0, session_id="test_sess", start_pos=0, out_mode=FP16)
     
-    # 3. Miner 1 (Layers 2-4)
-    miner_1 = LayerMinerRunner(layer_start=2, layer_end=4, d_model=d_model)
-    packed_h4 = miner_1.execute_forward_slice(packed_h1, session_id="test_sess")
+    # 4. Miner 2 (e.g., layers 15 to 29)
+    miner_2 = LayerMinerRunner(layer_start=15, layer_end=29)
+    packed_h2 = miner_2.execute_forward_slice(packed_h1, session_id="test_sess", start_pos=0, out_mode=FP16)
     
-    # 4. MoE Router (Sparse Top-2 Dispatch)
-    h4_unpacked = TensorCodec.dequantize_fp8_to_fp16(packed_h4)
-    moe_router = SparseMoERouter(num_experts=8, top_k=2, d_model=d_model)
-    moe_out, dispatched = moe_router(h4_unpacked.to(torch.float32))
-    assert len(dispatched) > 0, "No experts were dispatched!"
-    
-    packed_moe, _, _ = TensorCodec.quantize_fp16_to_fp8(moe_out)
-    
-    # 5. Miner 2 (Layers 5-8)
-    miner_2 = LayerMinerRunner(layer_start=5, layer_end=8, d_model=d_model)
-    packed_h8 = miner_2.execute_forward_slice(packed_moe, session_id="test_sess")
-    
-    # 6. Client decodes final token locally
-    final_h = TensorCodec.dequantize_fp8_to_fp16(packed_h8).to(torch.float32)
-    next_token = client.decode_and_sample(final_h, temperature=0.0)
+    # 5. Client decodes final token locally
+    final_h = TensorCodec.decode_payload(packed_h2)
+    next_token = client.sample(final_h, temperature=0.0)
     
     assert isinstance(next_token, int)
-    assert 0 <= next_token < vocab_size
+    assert 0 <= next_token < client.config.vocab_size
+    word = client.tokenizer.decode([next_token])
+    assert len(word) > 0

@@ -40,20 +40,13 @@ ledger.balances[user_pubkey] = 50.0  # 50 Credits
 ledger.balances["miner_laptop_01"] = 100.0
 ledger.balances["miner_phone_02"] = 100.0
 
-print("🧠 Pre-loading Neural AI Model (Qwen/Qwen2.5-1.5B-Instruct)...")
-MODEL_ID = "Qwen/Qwen2.5-1.5B-Instruct"
-try:
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, local_files_only=True)
-    model = AutoModelForCausalLM.from_pretrained(MODEL_ID, local_files_only=True)
-except Exception:
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-    model = AutoModelForCausalLM.from_pretrained(MODEL_ID)
+from swarmnet.config import CONFIG
+from swarmnet.client.embedder import LocalSplitClient
 
-# Initialize Client UI (We only need Embedder + LM Head, so we delete the massive Transformer Layers to save RAM!)
-del model.model.layers
-import gc
-gc.collect()
-model.eval()
+print(f"🧠 Loading Local Split Client for {CONFIG.MODEL_NAME}...")
+client_model = LocalSplitClient(model_name=CONFIG.MODEL_NAME)
+tokenizer = client_model.tokenizer
+total_layers = 30
 
 # Start DHT Genesis Node
 dht_genesis = SwarmDHTNode(dht_port=8468)
@@ -61,7 +54,7 @@ dht_genesis = SwarmDHTNode(dht_port=8468)
 @app.on_event("startup")
 async def startup_event():
     await dht_genesis.start()
-    print(f"✅ Loaded 28 transformer layers. Sharding: Miner 1 (L0-L13), Miner 2 (L14-L27)")
+    print(f"✅ DHT Genesis listening on UDP 8468. Swarm Model: {CONFIG.MODEL_NAME} (30 layers)")
 
 def get_real_laptop_memory_mb():
     """Returns actual Linux RSS memory in MB used by this process."""
@@ -88,7 +81,7 @@ HTML_UI = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AirCompute • Decentralized AI Network</title>
+    <title>FALL • Decentralized AI Network</title>
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -978,25 +971,33 @@ async def trigger_swarm_inference(req: Request):
         for step in range(num_gen_tokens):
             t_start = time.time()
             
-            # 1. Local Embed (H_0)
-            embeds = model.model.embed_tokens(input_ids.to("cpu"))
+            # 1. Local Embed (H_0) - for step 0 pass all prompt tokens; for subsequent steps pass newly generated token
+            curr_input = input_ids if step == 0 else input_ids[:, -1:]
+            start_pos = 0 if step == 0 else input_ids.shape[1] - 1
+            embeds = client_model.embed(curr_input)
             
-            # 2. FP8 Quantize
-            fp8_bytes, _, _ = TensorCodec.quantize_fp16_to_fp8(embeds.to(torch.float16))
+            # 2. Encode to FP16 wire bytes
+            wire_bytes = TensorCodec.encode_payload(embeds)
             
             # 3. P2P Swarm Pipeline Forward Pass (Client ➔ Laptop L0-L14 ➔ Phone L15-L29)
             try:
-                miner1_url = await dht_genesis.find_peer(layer_index=0) or "http://127.0.0.1:8001"
+                miner1_url = await dht_genesis.find_peer(layer_index=0, model=CONFIG.MODEL_NAME) or "http://127.0.0.1:8001"
                 async with httpx.AsyncClient(timeout=120.0) as client:
-                    resp = await client.post(f"{miner1_url}/forward", content=fp8_bytes)
+                    resp = await client.post(
+                        f"{miner1_url}/forward",
+                        content=wire_bytes,
+                        headers={
+                            "X-Session-ID": "ui_chat_session",
+                            "X-Start-Pos": str(start_pos)
+                        }
+                    )
                     if resp.status_code != 200:
                         print(f"⚠️ [DEBUG] Swarm pipeline resp status {resp.status_code}! Breaking.")
                         break
                     
-                # Dequantize final activations after Layer 29 and apply final RMSNorm
-                h_last = TensorCodec.dequantize_fp8_to_fp16(resp.content, device="cpu").to(model.dtype)
-                h_normed = model.model.norm(h_last)
-                next_token_logits = model.lm_head(h_normed)[:, -1, :]
+                # Dequantize final activations and compute logits locally
+                h_last = TensorCodec.decode_payload(resp.content, device="cpu")
+                next_token_logits = client_model.logits(h_last)
             except Exception as e:
                 print(f"⚠️ [DEBUG] Exception in loop: {e}")
                 import traceback
@@ -1073,7 +1074,7 @@ async def trigger_swarm_inference(req: Request):
 async def health_check():
     return {
         "status": "HEALTHY",
-        "model": "Qwen2.5-1.5B-Instruct",
+        "model": CONFIG.MODEL_NAME,
         "layers": total_layers,
         "mesh_nodes": ["miner_laptop_01", "miner_phone_02"],
         "user_balance": ledger.get_balance(user_pubkey),

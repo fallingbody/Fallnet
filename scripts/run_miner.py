@@ -21,8 +21,9 @@ def main():
     parser.add_argument("--bootstrap-ip", type=str, default=None, help="Bootstrap node IP for DHT")
     parser.add_argument("--bootstrap-port", type=int, default=None, help="Bootstrap node UDP Port")
     
-    parser.add_argument("--model-name", type=str, default="Qwen/Qwen2.5-1.5B-Instruct", help="Hugging Face model ID")
-    parser.add_argument("--total-layers", type=int, default=28, help="Total layers in model")
+    from swarmnet.config import CONFIG
+    parser.add_argument("--model-name", type=str, default=CONFIG.MODEL_NAME, help="Hugging Face model ID")
+    parser.add_argument("--total-layers", type=int, default=30, help="Total layers in model")
     
     args = parser.parse_args()
     

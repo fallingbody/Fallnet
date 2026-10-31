@@ -18,5 +18,7 @@ COPY . .
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 
-# Default command (can be overridden by docker-compose or run arguments)
-ENTRYPOINT ["python", "scripts/run_miner.py"]
+EXPOSE 7860
+
+# Default command for Hugging Face Spaces
+ENTRYPOINT ["python", "app.py"]

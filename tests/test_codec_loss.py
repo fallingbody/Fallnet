@@ -1,21 +1,20 @@
 import torch
-from swarmnet.protocol.tensor_codec import TensorCodec
+import numpy as np
+import pytest
+from swarmnet.protocol.tensor_codec import TensorCodec, FP16, FP8
 
-# Test 1: Random tensor
-t_orig = torch.randn(1, 12, 576, dtype=torch.float16)
-packed_bytes, scale, shape = TensorCodec.quantize_fp16_to_fp8(t_orig)
-t_dequant = TensorCodec.dequantize_fp8_to_fp16(packed_bytes, device="cpu")
+def test_codec_cosine_similarity():
+    # Test with typical transformer hidden dimension
+    t_orig = torch.randn(1, 12, 576, dtype=torch.float32)
+    
+    # 1. FP16 Lossless Mode
+    fp16_bytes = TensorCodec.encode_payload(t_orig, mode=FP16)
+    t_fp16 = TensorCodec.decode_payload(fp16_bytes)
+    sim_fp16 = TensorCodec.compute_cosine_similarity(t_orig, t_fp16)
+    assert sim_fp16 >= 0.9999, f"FP16 similarity too low: {sim_fp16}"
 
-sim = TensorCodec.compute_cosine_similarity(t_orig, t_dequant)
-print(f"Cosine Similarity for FP8 Codec: {sim:.6f}")
-
-# Test 2: Uncompressed FP16 direct byte transfer codec for 100% loss-less baseline
-header = f"FP16|{t_orig.shape[0]},{t_orig.shape[1]},{t_orig.shape[2]}|".encode()
-raw_bytes = header + t_orig.cpu().numpy().tobytes()
-
-# Decode
-parts = raw_bytes.split(b"|", 2)
-dims = tuple(map(int, parts[1].decode().split(",")))
-t_fp16 = torch.from_numpy(np.frombuffer(parts[2], dtype=np.float16).copy()).reshape(dims)
-sim_fp16 = TensorCodec.compute_cosine_similarity(t_orig, t_fp16)
-print(f"Cosine Similarity for Raw FP16: {sim_fp16:.6f}")
+    # 2. FP8 Mode
+    fp8_bytes, scale, shape = TensorCodec.quantize_fp16_to_fp8(t_orig)
+    t_fp8 = TensorCodec.dequantize_fp8_to_fp16(fp8_bytes)
+    sim_fp8 = TensorCodec.compute_cosine_similarity(t_orig, t_fp8)
+    assert sim_fp8 >= 0.99, f"FP8 similarity too low: {sim_fp8}"

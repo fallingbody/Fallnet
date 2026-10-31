@@ -1,12 +1,21 @@
-# 🌐 AirCompute (SwarmNet)
+---
+title: FALL • Decentralized P2P AI Mesh
+emoji: 🍂
+colorFrom: amber
+colorTo: red
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
+# 🍂 FALL (SwarmNet)
 ### *Self-Sustaining Decentralized P2P AI Compute & Inference Utility*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Architecture: P2P Swarm](https://img.shields.io/badge/Architecture-P2P_Swarm-green.svg)]()
-[![Model Support: MoE & Dense](https://img.shields.io/badge/Models-DeepSeek--V3_|_Llama--3.3_|_Qwen--2.5-purple.svg)]()
-[![Governance: Team Lead & Senior CS Council](https://img.shields.io/badge/Governance-Team_Lead_+_2_Senior_Engineers-gold.svg)]()
+[![Model Support: MoE & Dense](https://img.shields.io/badge/Models-DeepSeek--V3_|_Llama--3.3_|_SmolLM--135M-purple.svg)]()
 
-AirCompute is a decentralized, peer-to-peer AI compute mesh that turns frontier AI models (DeepSeek-V3 671B, Llama-3.3 70B, Qwen-2.5 72B) into a low-cost, self-sustaining utility—like mobile internet or electricity—by pooling idle consumer hardware across the globe.
+FALL is a decentralized, peer-to-peer AI compute mesh that turns frontier AI models into a low-cost, self-sustaining utility by pooling idle consumer hardware across the globe.
 
 ---
 

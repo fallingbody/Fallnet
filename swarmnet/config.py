@@ -1,11 +1,14 @@
 """
-AirCompute Global Network & Model Constants
+FALL Global Network & Model Constants
 """
 from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class NetworkConfig:
-    # Model dimensions
+    # Single source of truth for the served model. Miners, client and DHT keys must agree.
+    MODEL_NAME: str = "HuggingFaceTB/SmolLM-135M-Instruct"
+
+    # Model dimensions (legacy toy defaults; real code reads dims from the HF config)
     DEFAULT_D_MODEL: int = 4096
     DEFAULT_NUM_HEADS: int = 32
     DEFAULT_VOCAB_SIZE: int = 32000
