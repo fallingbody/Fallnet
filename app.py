@@ -51,11 +51,8 @@ time.sleep(2)
 # 3. Mount our custom FastAPI app inside Gradio
 from scripts.run_client_ui import app as fastapi_app
 
-# Gradio mounts our full custom FastAPI suite with WebSocket & Chat Studio
-demo = gr.mount_gradio_app(fastapi_app, gr.Blocks(), path="/gradio")
+# gr.mount_gradio_app modifies and returns the FastAPI app
+app = gr.mount_gradio_app(fastapi_app, gr.Blocks(), path="/gradio")
 
-# Export for HF Spaces Gradio runner (HF runs demo.launch() automatically!)
-app = fastapi_app
-
-if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+# Also provide demo reference for Hugging Face Spaces supervisor
+demo = app
